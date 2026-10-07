@@ -1,6 +1,6 @@
 # web-cli-arcade 👾
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/bismuth47/web-cli-arcade)
 
 Mac (Docker Desktop / Colima) で動く、Webブラウザ上で CLIレトロゲームを遊べる超軽量 Docker コンテナ。
 
