@@ -104,10 +104,26 @@
     held = {};
   }
 
+  // Ctrl+A: ゲーム⇔裏シェル(tmux window)トグル用。素通しさせる
+  // (tmux側で bind-key -n C-a last-window)。ブラウザの全選択は抑止。
+  // DASのheld登録対象外・リピート不要のためe.repeatは無視する。
+  function isShellToggle(e) {
+    return e.code === "KeyA" && e.ctrlKey && !e.metaKey && !e.altKey;
+  }
+
   window.addEventListener("keydown", function (e) {
     if (e.code === "F9" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault(); e.stopPropagation();
       setEnabled(!enabled);
+      return;
+    }
+    if (isShellToggle(e)) {
+      if (e.isTrusted === false) return;
+      // ブラウザの全選択だけ抑止し、trustedイベント自体はxtermへ届ける
+      // (xtermがCtrl+Aを\x01に変換してpty→tmuxの-n C-aバインドに渡す)。
+      // stopPropagationはしない。DAS登録・リピート対象外。
+      e.preventDefault();
+      if (e.repeat) { e.stopPropagation(); return; }
       return;
     }
     if (!enabled) return;

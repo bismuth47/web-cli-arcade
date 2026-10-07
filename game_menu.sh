@@ -322,9 +322,26 @@ icon_wump() { cat <<'EOF'
 EOF
 }
 
+# メニュー滞在中はptyエコーを全面OFFにする
+# (read -s は読取中しかOFFにしないため、描画/sleep中に届いたDAS連打分が
+#  そのままエコーされて "^[[C" 等のゴミ表示になる。これを根本的に防ぐ)
+# ゲーム実行中・復帰待ちプロンプトでは元に戻す。
+STTY_SAVED=""
+if STTY_SAVED=$(stty -g 2>/dev/null); then
+  trap 'stty "$STTY_SAVED" 2>/dev/null || stty sane 2>/dev/null || true' EXIT HUP INT TERM
+  stty -echo 2>/dev/null || true
+fi
+menu_echo_off() { stty -echo 2>/dev/null || true; }
+menu_echo_restore() {
+  if [[ -n $STTY_SAVED ]]; then stty "$STTY_SAVED" 2>/dev/null || stty sane 2>/dev/null || true;
+  else stty echo 2>/dev/null || true; fi
+}
+
 pause_return() {
   term_size
+  menu_echo_restore
   center_prompt "  ${BOLD}${C_YELLOW}Press Enter to return to menu...${RST}"
+  menu_echo_off
 }
 
 run_game() {
@@ -364,10 +381,12 @@ run_game() {
   center_print "  ${BG_BLUE}${BOLD}  >>> $label を起動中... (終了はゲーム内の quit 操作)  ${RST}"
   sleep 0.7
   clear
-  # ゲーム実行 (終了コードは無視して必ずメニューに戻す)
+  # ゲーム実行中はエコーを元に戻す (終了コードは無視して必ずメニューに戻す)
+  menu_echo_restore
   "$bin" "$@" || true
   # curses系が画面を崩すのでリセット
   command -v reset >/dev/null 2>&1 && reset || clear
+  menu_echo_off
   term_size
   center_print "  ${DIM}--- $label 終了 ---${RST}"
   pause_return
@@ -454,7 +473,7 @@ draw_screen() {
   scr+=("")
   scr+=("${C_YELLOW}◀ $bar ▶${RST}")
   scr+=("")
-  scr+=("${DIM}← → : えらぶ   Enter : あそぶ   q : おわる${RST}")
+   scr+=("${DIM}← → : えらぶ   Enter : あそぶ   q : おわる   Ctrl+A : シェル切替${RST}")
   print_centered_block "${scr[@]}"
 }
 
@@ -464,6 +483,14 @@ read_key() {
   IFS= read -rsn1 k || { echo "QUIT"; return; }
   if [[ $k == $'\x1b' ]]; then
     IFS= read -rsn2 -t 0.3 rest || rest=""
+    # 分割到着で2バイト未満しか読めなかった場合は残りを追いかける
+    # (中途半端な残りバイトが次の入力として漏れてゴミ表示になるのを防止)
+    while ((${#rest} < 2)); do
+      local _more
+      IFS= read -rsn$((2 - ${#rest})) -t 0.3 _more || break
+      rest+="${_more:-}"
+      [[ -n ${_more:-} ]] || break
+    done
     k+="$rest"
   fi
   case "$k" in
@@ -492,15 +519,67 @@ print_centered_block \
 intro_animation
 sleep 0.2
 
+# 長押しリピート間引き (DAS由来の高速連打を秒間4〜5コマに抑制)
+# 環境変数 MENU_REPEAT_MS で調整可能 (既定200ms)
+MENU_REPEAT_MS=${MENU_REPEAT_MS:-200}
+[[ $MENU_REPEAT_MS =~ ^[0-9]+$ ]] || MENU_REPEAT_MS=200
+
+# ミリ秒時刻 (bash 5+ の EPOCHREALTIME を優先、無ければ GNU date)
+now_ms() {
+  local t s us
+  if [[ -n ${EPOCHREALTIME:-} ]]; then
+    s=${EPOCHREALTIME%%.*}; us=${EPOCHREALTIME#*.}
+    printf '%d' "$(( 10#$s * 1000 + 10#${us:0:3} ))"
+    return
+  fi
+  t=$(date +%s%3N 2>/dev/null) || t=""
+  if [[ $t =~ ^[0-9]+$ ]]; then
+    printf '%s' "$t"
+  else
+    printf '%d' "$(( $(date +%s) * 1000 ))"
+  fi
+}
+
+# stdin に溜まったリピート分を捨てる (指を離した後の追従暴走を防止)
+# 注意: ESC(矢印の先頭バイト)だけ捨てると残りの "[C" が画面に漏れて
+# "[[C" 等のゴミ表示になるため、続きは十分なタイムアウトで必ず吸収する
+flush_pending_input() {
+  local _c _rest _i
+  for ((_i=0; _i<32; _i++)); do
+    IFS= read -rsn1 -t 0.02 _c || break
+    if [[ $_c == $'\x1b' ]]; then
+      # 矢印キー(ESC [ X)は3バイト一体。後続が届くまで待って捨てる
+      IFS= read -rsn2 -t 0.3 _rest || _rest=""
+      # 2バイト未満しか来なかった場合もこれ以上待たずに捨てる
+      # (中途半端に残すと画面に "[C" 等が漏れる)
+    fi
+  done
+}
+
 # ---- 無限ループ・カルーセル ----
 CUR=0
 TOTAL=${#GAMES[@]}
+LAST_MOVE_MS=0
 while true; do
   draw_screen "$CUR" "$TOTAL"
   KEY=$(read_key)
   case "$KEY" in
-    RIGHT) CUR=$(( (CUR + 1) % TOTAL )) ;;
-    LEFT)  CUR=$(( (CUR - 1 + TOTAL) % TOTAL )) ;;
+    RIGHT|LEFT)
+      NOW_MS=$(now_ms)
+      ELAPSED=$(( NOW_MS - LAST_MOVE_MS ))
+      if (( ELAPSED < MENU_REPEAT_MS )); then
+        # 間引き: 溜まった分を捨て、間隔が空くまで待つ
+        flush_pending_input
+        NOW_MS=$(now_ms)
+        ELAPSED=$(( NOW_MS - LAST_MOVE_MS ))
+        if (( ELAPSED < MENU_REPEAT_MS )); then
+          sleep "$(awk -v r="$MENU_REPEAT_MS" -v e="$ELAPSED" 'BEGIN{printf "%.3f",(r-e)/1000}')"
+        fi
+        continue
+      fi
+      LAST_MOVE_MS=$NOW_MS
+      if [[ $KEY == RIGHT ]]; then CUR=$(( (CUR + 1) % TOTAL )); else CUR=$(( (CUR - 1 + TOTAL) % TOTAL )); fi
+      ;;
     ENTER)
       entry="${GAMES[$CUR]}"
       IFS='|' read -r gid gtitle _gg _gd _gc <<< "$entry"

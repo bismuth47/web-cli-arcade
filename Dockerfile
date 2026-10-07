@@ -147,6 +147,7 @@ RUN apk add --no-cache \
     gnuchess \
     zangband \
     ttyd \
+    tmux \
  && rm -rf /var/cache/apk/* \
             /usr/share/man/* \
             /usr/share/doc/*
@@ -201,7 +202,7 @@ RUN chmod +x /usr/local/bin/game_menu.sh \
 
 EXPOSE 8080 8081
 
-ENV TERM=xterm-256color
+ENV TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # -W はブラウザからの入力許可に必須
 # :8080=20本メニュー(ttyd) / :8081=vitetris 2P同時長押し対応DAS端末
