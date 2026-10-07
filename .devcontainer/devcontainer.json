@@ -1,0 +1,23 @@
+{
+  "name": "web-cli-arcade",
+  "build": {
+    "dockerfile": "../Dockerfile"
+  },
+  "forwardPorts": [8080, 8081],
+  "portsAttributes": {
+    "8080": {
+      "label": "Arcade Menu",
+      "onAutoForward": "openPreview"
+    },
+    "8081": {
+      "label": "Vitetris DAS",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "remoteUser": "root",
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    }
+  }
+}

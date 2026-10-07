@@ -1,0 +1,15 @@
+--- a/pacman.c
++++ b/pacman.c
+@@ -219,5 +219,10 @@
+ void CreateWindows(int y, int x, int y0, int x0) {
++    /* web-cli-arcade: center maze + status windows (all drawing
++       is window-relative, so moving the windows centers the game) */
++    int maxh, maxw; getmaxyx(stdscr, maxh, maxw);
++    int nx0 = (maxw - x) / 2; if (nx0 < 0) nx0 = x0;
++    int ny0 = (maxh - (y + 3)) / 2; if (ny0 < 0) ny0 = y0;
+     //Create two new windows, for status bar and for main level
+-    win = newwin(y, x, y0, x0);
+-    status = newwin(3, 27, 29, 1);
++    win = newwin(y, x, ny0, nx0);
++    status = newwin(3, 27, ny0 + y, nx0);
+ }

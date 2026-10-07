@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vitetris 2P — 同時長押しDAS対応</title>
+<link rel="stylesheet" href="/static/xterm.css">
+<style>
+html,body{margin:0;padding:0;height:100%;background:#05070f;color:#d7f9ff;
+  font-family:ui-monospace,Menlo,Consolas,"Hiragino Kaku Gothic ProN",monospace}
+#bar{display:flex;gap:10px;align-items:center;padding:6px 10px;font-size:12px;
+  background:#0a1226;border-bottom:1px solid #1c2f55;flex-wrap:wrap}
+#dot{width:10px;height:10px;border-radius:50%;background:#f66;display:inline-block}
+#dot.ok{background:#7dff9a}
+#bar button{background:#102a4d;color:#bff;border:1px solid #2a5a8a;border-radius:6px;
+  padding:4px 10px;cursor:pointer;font-size:12px;font-family:inherit}
+#bar button:hover{background:#1a3a66}
+#keys{color:#8aa}
+#term{height:calc(100% - 34px);padding:6px}
+.xterm{height:100%}
+.kbd{border:1px solid #456;border-radius:4px;padding:0 5px;background:#0c162e;color:#fff}
+</style>
+</head>
+<body>
+<div id="bar">
+  <span id="dot"></span><span id="msg">接続中…</span>
+  <span id="keys">1P:<span class="kbd">A</span><span class="kbd">D</span>移動 <span class="kbd">W</span>回転 <span class="kbd">S</span>落下 /
+  2P:<span class="kbd">J</span><span class="kbd">L</span>/<span class="kbd">←</span><span class="kbd">→</span> <span class="kbd">I</span>/<span class="kbd">↑</span> <span class="kbd">K</span>/<span class="kbd">↓</span> /
+  共通:<span class="kbd">Space</span>ハード / IMEは英数に / 画面クリックでフォーカス</span>
+  <button id="bRestart" style="margin-left:auto">↻ vitetris再起動</button>
+</div>
+<div id="term"></div>
+<script src="/static/xterm.js"></script>
+<script src="/static/addon-fit.js"></script>
+<script>
+"use strict";
+const dot=document.getElementById('dot'),msg=document.getElementById('msg');
+const term=new Terminal({cols:96,rows:30,scrollback:0,fontSize:14,
+  fontFamily:'ui-monospace,Menlo,Consolas,monospace',
+  theme:{background:'#000000',foreground:'#d7f9ff',cursor:'#ffd257'}});
+const fit=new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+// xterm内蔵のキー処理を無効化し、下の自前ハンドラに一本化 (up/down両対応のため)
+term.attachCustomKeyEventHandler(()=>false);
+fit.fit();
+
+let ws=null,retry=0;
+const pressed=new Set();
+// preventDefault対象=ゲーム用キーだけ (F5/Ctrl+R等は潰さない)
+const GAME=new Set(['KeyA','KeyD','KeyW','KeyS','KeyQ','KeyE',
+  'KeyJ','KeyL','KeyI','KeyK','Comma','Period','KeyP','Space',
+  'ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter']);
+
+function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o));}
+function sendResize(){
+  try{const d=fit.proposeDimensions();
+    if(d&&d.cols&&d.rows)send({t:'resize',cols:d.cols|0,rows:d.rows|0});}catch(e){}
+}
+function releaseAll(){pressed.forEach(c=>send({t:'up',code:c}));pressed.clear();}
+
+document.addEventListener('keydown',e=>{
+  if(!GAME.has(e.code))return;
+  e.preventDefault();
+  if(e.repeat)return;
+  pressed.add(e.code);
+  send({t:'down',code:e.code});
+});
+document.addEventListener('keyup',e=>{
+  if(pressed.has(e.code)){pressed.delete(e.code);send({t:'up',code:e.code});}
+});
+window.addEventListener('blur',releaseAll);
+window.addEventListener('pagehide',releaseAll);
+window.addEventListener('resize',()=>{try{fit.fit();}catch(e){}sendResize();});
+document.getElementById('term').addEventListener('click',()=>term.focus());
+document.getElementById('bRestart').addEventListener('click',e=>{
+  e.currentTarget.blur();term.focus();send({t:'start'});
+});
+
+function setStatus(ok,text){dot.className=ok?'ok':'';dot.id='dot';msg.textContent=text;}
+function connect(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(proto+'://'+location.host+'/ws');
+  ws.onopen=()=>{retry=0;setStatus(true,'接続OK — 同時長押しDAS有効');
+    setTimeout(()=>{try{fit.fit();}catch(e){}sendResize();},50);};
+  ws.onmessage=ev=>{
+    const s=String(ev.data||'');
+    if(s.charCodeAt(0)===1){ // 制御フレーム
+      try{const o=JSON.parse(s.slice(1));
+        if(o.sys==='exit')setStatus(false,'vitetris終了 — ↻で再起動 (または何かキー)');
+        else if(o.sys==='running')setStatus(true,'接続OK — 同時長押しDAS有効');
+      }catch(e){}
+      return;
+    }
+    term.write(s);
+  };
+  const back=()=>{setStatus(false,'切断 — 再接続中…');releaseAll();
+    retry++;setTimeout(connect,Math.min(5000,500*retry));};
+  ws.onclose=back;ws.onerror=()=>{try{ws.close();}catch(e){}};
+}
+connect();
+term.focus();
+</script>
+</body>
+</html>
